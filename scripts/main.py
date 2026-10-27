@@ -22,6 +22,24 @@ def softmax(x, axis=None):
     exp_x_shifted = np.exp(x - x_max)
     return exp_x_shifted / np.sum(exp_x_shifted, axis=axis, keepdims=True)
 
+def get_knn_probs(knn_scores, knn_indices, targets, dstore_targets, ks, temperatures):
+    """p_knn[i, j, n] = sum(is_target[:k] * softmax(knn_scores[:k] / temperature)) for token n,
+    with k = ks[i] and temperature = temperatures[j], computed for a batch of tokens at once.
+    Missing neighbors (index -1, returned by FAISS when fewer than k are found) are ignored."""
+    valid = knn_indices >= 0
+    is_target = valid & (dstore_targets[np.maximum(knn_indices, 0)] == targets[:, None])
+    knn_scores = np.where(valid, knn_scores.astype(np.float64), -np.inf)
+    p_knn = np.zeros((len(ks), len(temperatures), len(targets)))
+    for i, k in enumerate(ks):
+        for j, temperature in enumerate(temperatures):
+            scores = knn_scores[:, :k] / temperature
+            x_max = np.max(scores, axis=1, keepdims=True)
+            exp_x_shifted = np.exp(scores - np.where(np.isfinite(x_max), x_max, 0))
+            numerator = np.sum(exp_x_shifted * is_target[:, :k], axis=1)
+            denominator = np.sum(exp_x_shifted, axis=1)
+            p_knn[i, j] = np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator > 0)
+    return p_knn
+
 def main(args):
     args.output_dir = os.path.join(args.output_dir, args.lm.split("/")[-1], args.split)
 
@@ -250,7 +268,9 @@ def process(args, lm, task, subset):
     elif task=="inference":
         assert args.split.startswith("train")
 
-        result_path = os.path.join(args.output_dir, "{}-{}{}-{}-k={}-p={}{}.jsonl".format(
+        # neighbors are saved as {result_base}.scores.npy / .indices.npy ([n_eval_tokens, k]), and
+        # per-token kNN probabilities for every (k, temperature) as {result_base}.pknn.npy
+        result_base = os.path.join(args.output_dir, "{}-{}{}-{}-k={}-p={}{}".format(
                 subset if args.val_subset is None else "{}-from-{}".format(args.val_subset, subset),
                 args.val_split,
                 "_subset" if args.do_subset else "",
@@ -259,8 +279,10 @@ def process(args, lm, task, subset):
                 args.probe,
                 "_approx" if args.approximate else ""
         ))
+        scores_path = result_base + ".scores.npy"
+        indices_path = result_base + ".indices.npy"
 
-        if not os.path.exists(result_path):
+        if not os.path.exists(result_base + ".done"):
             dstore_targets = get_flatten_targets(tokenized_path, split=args.split)
             dstore_size = len(dstore_targets)
             dstore = DataStore(embed_path=embed_path,
@@ -284,23 +306,19 @@ def process(args, lm, task, subset):
             if args.skip_eval:
                 return
 
-            batch_size = 128
-            val_targets, val_losses, val_embeds = get_val_data(batch_size=batch_size, do_load_embed=True)
+            # the batch size does not affect the results; larger batches use FAISS's threads better
+            batch_size = 1024
+            val_targets, val_losses, val_embeds = get_val_data(batch_size=128, do_load_embed=True)
 
-            lambdas = [0.0, 0.1, 0.2, 0.3, 0.5, 0.7]
-            losses = defaultdict(list)
-            results = []
-
-            if args.embed_idx > 0:
-                dstore_targets = get_flatten_targets(tokenized_path, split=args.split, for_search=True)
-            batch_indices = range(math.ceil(len(val_embeds) / batch_size))
+            n_eval = len(val_embeds)
+            all_knn_scores_out = np.lib.format.open_memmap(scores_path, mode="w+", dtype=np.float32, shape=(n_eval, args.k))
+            all_knn_indices_out = np.lib.format.open_memmap(indices_path, mode="w+", dtype=np.int32, shape=(n_eval, args.k))
+            batch_indices = range(math.ceil(n_eval / batch_size))
 
             for batch_idx in tqdm(batch_indices):
                 start = batch_size * batch_idx
                 end = batch_size * (batch_idx+1)
                 curr_val_embeds = val_embeds[start:end].astype(np.float32)
-                # curr_val_targets = val_targets[start:end]
-                # curr_val_losses = val_losses[start:end]
 
                 all_scores, all_indices = dstore.search(curr_val_embeds, k=args.k)
 
@@ -309,20 +327,14 @@ def process(args, lm, task, subset):
                 else:
                     all_knn_scores = dstore.get_knn_scores(curr_val_embeds, all_indices)
 
-                for (indices, knn_scores) in zip(all_indices, all_knn_scores):
-                    results.append({"knn_scores": knn_scores.tolist(), "knn_indices": indices.tolist()})
+                all_knn_scores_out[start:end] = all_knn_scores
+                all_knn_indices_out[start:end] = all_indices
 
-                if (batch_idx+1) % 100 == 0:
-                    with open(result_path, "a+") as f:
-                        for r in results:
-                            f.write(json.dumps(r) + "\n")
-                        results = []
-
-            if len(results) > 0:
-                with open(result_path, "a+") as f:
-                    for r in results:
-                        f.write(json.dumps(r) + "\n")
-                    results = []
+            all_knn_scores_out.flush()
+            all_knn_indices_out.flush()
+            del all_knn_scores_out, all_knn_indices_out
+            # written last: its presence means the neighbor files are complete
+            open(result_base + ".done", "w").close()
 
         ##### Now, compute perplexity
         ks = [128, 256, 512, 1024, 2048, 4096]
@@ -336,40 +348,54 @@ def process(args, lm, task, subset):
         else:
             temperatures = [1.0, 3.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0]
 
-        losses = defaultdict(list)
+        if args.config_from is not None:
+            # score only the configuration that was best in another run's grid (e.g., val), not the full grid
+            with open(args.config_from) as f:
+                best = min(json.load(f)["ppl"], key=lambda d: d["ppl"])
+            ks, temperatures, lambdas = [best["k"]], [best["temperature"]], [best["lambda"]]
+            print ("Using k=%d, temperature=%s, lambda=%s from %s" % (best["k"], best["temperature"], best["lambda"], args.config_from))
+
         dstore_targets = get_flatten_targets(tokenized_path, split=args.split, for_search=True)
 
-        print ("Reading %s" % result_path)
+        print ("Reading %s" % scores_path)
         val_targets, val_losses = get_val_data(batch_size=128, do_load_embed=False)
-        assert len(val_targets)==len(val_losses)
-        offset = 0
+        all_knn_scores = np.load(scores_path, mmap_mode="r")
+        all_knn_indices = np.load(indices_path, mmap_mode="r")
+        assert len(val_targets)==len(val_losses)==len(all_knn_scores)==len(all_knn_indices)
 
-        with open(result_path, "r") as f:
-            for line in tqdm(f, total=len(val_targets)):
-                target = val_targets[offset]
-                p_lm = np.exp(-val_losses[offset])
-                dp = json.loads(line)
-                knn_scores = np.array(dp["knn_scores"])
-                indices = np.array(dp["knn_indices"])
-                offset += 1
-                is_target = dstore_targets[indices]==target
+        print ("Missing neighbors (-1): %d; top-1 neighbor predicts the target: %.1f%%" % (
+            np.sum(all_knn_indices[:, :max(ks)] < 0),
+            100 * np.mean(dstore_targets[np.maximum(all_knn_indices[:, 0], 0)] == val_targets)))
 
-                for k in ks:
-                    for temperature in temperatures:
-                        knn_probs = softmax(knn_scores[:k] / temperature)
-                        p_knn = np.sum(is_target[:k] * knn_probs)
-                        for lambda_ in lambdas:
-                            if type(lambda_)==float and lambda_==0 and (k!=ks[0] or temperature!=temperatures[0]):
-                                continue
-                            loss = -np.log(p_lm * (1-lambda_) + p_knn * lambda_)
-                            losses[(k, temperature, lambda_)].append(loss)
+        p_knn = np.zeros((len(ks), len(temperatures), len(val_targets)))
+        score_batch_size = 1024
+        for start in tqdm(range(0, len(val_targets), score_batch_size)):
+            end = start + score_batch_size
+            p_knn[:, :, start:end] = get_knn_probs(
+                all_knn_scores[start:end, :max(ks)], all_knn_indices[start:end, :max(ks)],
+                val_targets[start:end], dstore_targets, ks, temperatures)
+        np.save(result_base + ".pknn.npy", p_knn.astype(np.float32))
 
-        aggregated_losses = {k: np.exp(np.mean(v)) for k, v in losses.items()}
+        p_lm = np.exp(-val_losses)
+        aggregated_losses = {}
+        for i, k in enumerate(ks):
+            for j, temperature in enumerate(temperatures):
+                for lambda_ in lambdas:
+                    if type(lambda_)==float and lambda_==0 and (k!=ks[0] or temperature!=temperatures[0]):
+                        continue
+                    loss = -np.log(p_lm * (1-lambda_) + p_knn[i, j] * lambda_)
+                    aggregated_losses[(k, temperature, lambda_)] = np.exp(np.mean(loss))
+
+        with open(result_base + ".grid.json", "w") as f:
+            json.dump({"ks": ks, "temperatures": temperatures, "lambdas": lambdas,
+                       "n_tokens": len(val_targets),
+                       "param_only_ppl": float(np.exp(np.mean(val_losses))),
+                       "ppl": [{"k": k, "temperature": t, "lambda": l, "ppl": float(v)}
+                               for (k, t, l), v in aggregated_losses.items()]}, f, indent=1)
         for key, value in sorted(aggregated_losses.items(), key=lambda x: x[1])[:10]:
             print ("%s\tPPL=%.3f" % (key, value))
         print ("-"*20)
-        key = (ks[0], temperatures[0], 0)
-        print ("%s\tPPL=%.3f" % (key, aggregated_losses[key]))
+        print ("param-only\tPPL=%.3f" % np.exp(np.mean(val_losses)))
 
     else:
         raise NotImplementedError(task)
@@ -398,6 +424,8 @@ if __name__=='__main__':
     parser.add_argument("--k", default=4096, type=int)
     parser.add_argument("--probe", default=8, type=int)
     parser.add_argument("--approximate", action="store_true")
+    parser.add_argument("--config_from", type=str, default=None,
+                        help="a .grid.json from another run (e.g., val); score only its best (k, temperature, lambda)")
 
     # misc configs
     parser.add_argument("--do_subset", action="store_true")

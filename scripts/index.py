@@ -34,7 +34,8 @@ class DataStore(object):
         self.index_path = index_path
         self.prev_index_path = prev_index_path
         self.trained_index_path = trained_index_path
-        self.cuda = True
+        # train on GPU when a GPU build of faiss is installed, otherwise on CPU
+        self.cuda = hasattr(faiss, "StandardGpuResources")
 
         self.dstore_size = dstore_size
         self.dimension = dimension
@@ -67,7 +68,7 @@ class DataStore(object):
                                                   size=[min(sample_size, dstore_size)],
                                                   replace=False)
                 t0 = time.time()
-                sampled_embs = self.get_embs(random_samples)
+                sampled_embs = self.get_sampled_embs(np.sort(random_samples))
                 print (time.time()-t0)
                 print ("Training index...")
                 self._train_index(sampled_embs, self.trained_index_path)
@@ -85,10 +86,33 @@ class DataStore(object):
                 end = self.dstore_size*(i+1)
                 ref_indices = np.minimum(np.maximum(indices, start), end-1)
                 embs += (indices >= start) * (indices < self.dstore_size*(i+1)) * ref_embs[ref_indices]
+        elif type(indices)==range and indices.step==1:
+            embs = self.read_rows(indices.start, indices.stop)
         else:
             embs = self.embs[indices]
 
         return embs.astype(np.float32)
+
+    def read_rows(self, start, end):
+        # Fancy-indexing a memmap faults in one page at a time, which is very slow on a
+        # network filesystem (~100 KB/s on Delta's /work/hdd). Read contiguous rows directly instead.
+        if not isinstance(self.embs, np.memmap):
+            return np.asarray(self.embs[start:end])
+        row_bytes = self.dimension * self.embs.dtype.itemsize
+        with open(self.embs.filename, "rb") as f:
+            f.seek(self.embs.offset + start * row_bytes)
+            rows = np.fromfile(f, dtype=self.embs.dtype, count=(end - start) * self.dimension)
+        return rows.reshape(end - start, self.dimension)
+
+    def get_sampled_embs(self, sorted_indices, chunk_size=1000000):
+        # same as get_embs(sorted_indices), but reads the datastore sequentially in chunks
+        embs = []
+        for start in range(0, self.dstore_size, chunk_size):
+            end = min(self.dstore_size, start + chunk_size)
+            lo, hi = np.searchsorted(sorted_indices, [start, end])
+            if hi > lo:
+                embs.append(self.read_rows(start, end)[sorted_indices[lo:hi] - start])
+        return np.concatenate(embs).astype(np.float32)
 
     def search(self, query_embs, k=4096):
         all_scores, all_indices = self.index.search(query_embs.astype(np.float32), k)

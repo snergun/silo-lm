@@ -9,8 +9,6 @@ from tqdm import tqdm
 from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, GPTNeoXTokenizerFast
 
-from utils.transformers.model import OpenLMforCausalLM
-
 def batch_merged(flatten_input_ids, max_seq_length, stride, pad_token, flatten_masks=None):
     all_input_ids = []
     all_targets = []
@@ -165,6 +163,8 @@ class LanguageModel(object):
             self.model = AutoModelForCausalLM.from_pretrained("EleutherAI/pythia-6.9b-deduped-v0")
             self.dimension = self.model.config.hidden_size
         elif self.name.startswith("silo-"):
+            # imported here so that HF-only models (e.g., Pythia) do not require xformers
+            from utils.transformers.model import OpenLMforCausalLM
             self.model = OpenLMforCausalLM.from_pretrained("kernelmachine/" + self.name)
             self.dimension = self.model.config.hidden_dim
         else:
