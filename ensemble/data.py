@@ -78,8 +78,9 @@ class Split(object):
         self.targets = torch.from_numpy(np.load(paths.cached(split, "targets")).astype(np.int64))
         self.lm_loss = torch.from_numpy(np.load(paths.cached(split, "lm_loss")))
         self.h = torch.from_numpy(np.array(load_embed(paths.embed(split))))
-        self.knn_vals = torch.from_numpy(np.ascontiguousarray(np.load(paths.cached(split, "knn_vals"), mmap_mode="r")[:, :k]))
-        self.knn_scores = torch.from_numpy(np.ascontiguousarray(np.load(paths.cached(split, "knn_scores"), mmap_mode="r")[:, :k]))
+        # np.array copies into RAM even when k == K (ascontiguousarray would return the memmap itself)
+        self.knn_vals = torch.from_numpy(np.array(np.load(paths.cached(split, "knn_vals"), mmap_mode="r")[:, :k]))
+        self.knn_scores = torch.from_numpy(np.array(np.load(paths.cached(split, "knn_scores"), mmap_mode="r")[:, :k]))
         self.doc_starts = np.load(paths.cached(split, "doc_starts"))
         assert len(self.targets) == len(self.h) == len(self.knn_vals) == len(self.lm_loss)
 

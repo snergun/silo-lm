@@ -24,9 +24,10 @@ module load pytorch-conda
 source "$VENV/bin/activate"
 export PYTHONPATH=$REPO:$REPO/scripts
 
-for spec in "Enron_Emails /work/hdd/bcyi/eergun/silo-knn 8" "cc-news /work/nvme/bcyi/eergun/silo-knn-ccnews 9"; do
+for spec in "Enron_Emails /work/hdd/bcyi/eergun/silo-knn 8" "cc-news /work/nvme/bcyi/eergun/silo-knn-ccnews 9" \
+            "Wikipedia_(en) /work/hdd/bcyi/eergun/silo-knn-wiki 31" "Github /work/hdd/bcyi/eergun/silo-knn-github 39"; do
     set -- $spec
-    if [ -f "$2/out/pythia-1.4B/ensemble/$1/fixed/.done" ]; then
+    if [ -f "$2/out/pythia-1.4B/ensemble/$1/fixed/.done" ] && [ -f "$2/data/$1-dstore-overlap/test_13gram_overlap.npy" ]; then
         t0=$(date +%s)
         python3 -m ensemble.overlap_breakdown --work "$2" --subset "$1" --last_idx $3
         echo "breakdown $1: $(( $(date +%s) - t0 ))s"

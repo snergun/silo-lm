@@ -11,7 +11,11 @@ import json
 import os
 
 DOMAINS = [("Enron_Emails", "/work/hdd/bcyi/eergun/silo-knn"),
-           ("cc-news", "/work/nvme/bcyi/eergun/silo-knn-ccnews")]
+           ("cc-news", "/work/nvme/bcyi/eergun/silo-knn-ccnews"),
+           # partial datastore (first 32 shards) and a ~1.1M-token document sample of val/test
+           ("Wikipedia_(en)", "/work/hdd/bcyi/eergun/silo-knn-wiki"),
+           # full datastore (40 shards) and a ~1.1M-token document sample of val/test
+           ("Github", "/work/hdd/bcyi/eergun/silo-knn-github")]
 ARMS = [("fixed", "Fixed λ (kNN-LM, refit on fit slice)"), ("pct", "Fixed λ + PCT"),
         ("dawin", "DAWIN (b, τ_m)"), ("dawin_cov", "DAWIN (b, τ_m, c·top-1 score)"),
         ("adaptive", "Adaptive linear (MLP)"), ("nonlinear", "Non-linear")]

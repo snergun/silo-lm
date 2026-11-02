@@ -18,7 +18,7 @@ Test perplexity (Δ against the fixed kNN-LM, 3.971):
 | DAWIN (b, τ_m) | 3.708 | -6.6% | 3.534 | -11.0% |
 | DAWIN (b, τ_m, c·top-1 score) | 3.685 | -7.2% | 3.534 | -11.0% |
 | Adaptive linear (MLP) | 3.544 | -10.7% | 3.466 | -12.7% |
-| Non-linear | 3.487 | -12.2% | – |  |
+| Non-linear | 3.487 | -12.2% | 3.447 | -13.2% |
 
 <details><summary>Fit / early-stop perplexity, best step, mean kNN weight</summary>
 
@@ -33,6 +33,7 @@ Test perplexity (Δ against the fixed kNN-LM, 3.971):
 | adaptive | 4.062 | 3.954 | 3.544 | 1632 | 0.575 |
 | adaptive+pct | 3.965 | 3.867 | 3.466 | 3648 | 0.596 |
 | nonlinear | 3.989 | 3.895 | 3.487 | 1344 | – |
+| nonlinear+pct | 3.943 | 3.848 | 3.447 | 2976 | – |
 
 </details>
 
@@ -50,10 +51,107 @@ Test perplexity by how much of each document is in the datastore (token 13-gram 
 | adaptive | 6.122 | -9.7% | 53% | 1.607 | -12.2% | 47% |
 | adaptive+pct | 6.054 | -10.7% | 49% | 1.546 | -15.6% | 51% |
 | nonlinear | 6.063 | -10.6% | 51% | 1.566 | -14.5% | 49% |
+| nonlinear+pct | 6.024 | -11.1% | 49% | 1.537 | -16.1% | 51% |
 
 ## cc-news
 
 Datastore 1024-512-[0K-100K]; val 1094505 positions, fit slice val[:984523] (90.0%), early stopping on the rest. Members: k=4096, τ=80.0 (chosen with λ on the fit slice). Neighbors: approximate (IVFPQ) scores.
 
-No finished runs yet.
+Test perplexity (Δ against the fixed kNN-LM, 8.910):
+
+| Method | test | Δ | +PCT test | Δ |
+|---|---:|---:|---:|---:|
+| Pythia-1.4B only | 11.967 | +34.3% | | |
+| kNN-LM as in scripts/main.py (k=4096, τ=80.0, λ=0.3, all of val) | 8.910 | +0.0% | | |
+| Fixed λ (kNN-LM, refit on fit slice) | 8.910 | +0.0% | 8.852 | -0.6% |
+| DAWIN (b, τ_m) | 7.963 | -10.6% | 7.743 | -13.1% |
+| DAWIN (b, τ_m, c·top-1 score) | 7.863 | -11.8% | 7.721 | -13.3% |
+| Adaptive linear (MLP) | 7.651 | -14.1% | 7.601 | -14.7% |
+| Non-linear | 7.612 | -14.6% | 7.591 | -14.8% |
+
+<details><summary>Fit / early-stop perplexity, best step, mean kNN weight</summary>
+
+| Run | fit | early-stop | test | best step | mean kNN weight (test) |
+|---|---:|---:|---:|---:|---:|
+| fixed | 8.230 | 7.903 | 8.910 | 0 | 0.320 |
+| pct | 8.171 | 7.841 | 8.852 | 768 | 0.324 |
+| dawin | 7.411 | 7.080 | 7.963 | 2592 | 0.282 |
+| dawin+pct | 7.193 | 6.863 | 7.743 | 2304 | 0.298 |
+| dawin_cov | 7.313 | 6.992 | 7.863 | 2208 | 0.284 |
+| dawin_cov+pct | 7.171 | 6.843 | 7.721 | 2592 | 0.297 |
+| adaptive | 7.112 | 6.788 | 7.651 | 7392 | 0.268 |
+| adaptive+pct | 7.059 | 6.730 | 7.601 | 6240 | 0.285 |
+| nonlinear | 7.073 | 6.742 | 7.612 | 2304 | – |
+| nonlinear+pct | 7.051 | 6.715 | 7.591 | 1152 | – |
+
+</details>
+
+Test perplexity by how much of each document is in the datastore (token 13-gram overlap; ensemble/overlap_breakdown.py). Δ is against the fixed kNN-LM in the same group; share = the group's part of the run's total NLL reduction over the fixed kNN-LM.
+
+| Run | <50% in datastore (81% of tokens): PPL | Δ | share | >=50% in datastore (19% of tokens): PPL | Δ | share |
+|---|---:|---:|---:|---:|---:|---:|
+| Pythia-1.4B only | 12.363 | +4.4% |  | 10.404 | +295.9% |  |
+| fixed | 11.840 | +0.0% |  | 2.628 | +0.0% |  |
+| pct | 11.829 | -0.1% | 11% | 2.549 | -3.0% | 89% |
+| dawin | 11.180 | -5.6% | 41% | 1.855 | -29.4% | 59% |
+| dawin+pct | 11.028 | -6.9% | 41% | 1.696 | -35.5% | 59% |
+| dawin_cov | 11.088 | -6.4% | 43% | 1.797 | -31.6% | 57% |
+| dawin_cov+pct | 11.003 | -7.1% | 41% | 1.687 | -35.8% | 59% |
+| adaptive | 10.856 | -8.3% | 46% | 1.703 | -35.2% | 54% |
+| adaptive+pct | 10.863 | -8.2% | 44% | 1.640 | -37.6% | 56% |
+| nonlinear | 10.835 | -8.5% | 46% | 1.671 | -36.4% | 54% |
+| nonlinear+pct | 10.827 | -8.6% | 45% | 1.653 | -37.1% | 55% |
+
+## Wikipedia_(en)
+
+Datastore 1024-512-[0K-320K]; val 1112658 positions, fit slice val[:1001534] (90.0%), early stopping on the rest. Members: k=2048, τ=80.0 (chosen with λ on the fit slice). Neighbors: approximate (IVFPQ) scores.
+
+Test perplexity (Δ against the fixed kNN-LM, 8.396):
+
+| Method | test | Δ | +PCT test | Δ |
+|---|---:|---:|---:|---:|
+| Pythia-1.4B only | 8.600 | +2.4% | | |
+| kNN-LM as in scripts/main.py (k=4096, τ=80.0, λ=0.1, all of val) | 8.396 | +0.0% | | |
+| Fixed λ (kNN-LM, refit on fit slice) | 8.396 | +0.0% | 8.390 | -0.1% |
+| DAWIN (b, τ_m) | 8.325 | -0.8% | 8.308 | -1.0% |
+| DAWIN (b, τ_m, c·top-1 score) | 8.327 | -0.8% | 8.309 | -1.0% |
+| Adaptive linear (MLP) | 8.296 | -1.2% | 8.282 | -1.4% |
+| Non-linear | 8.251 | -1.7% | 8.237 | -1.9% |
+
+<details><summary>Fit / early-stop perplexity, best step, mean kNN weight</summary>
+
+| Run | fit | early-stop | test | best step | mean kNN weight (test) |
+|---|---:|---:|---:|---:|---:|
+| fixed | 9.420 | 9.603 | 8.396 | 0 | 0.080 |
+| pct | 9.415 | 9.598 | 8.390 | 384 | 0.077 |
+| dawin | 9.342 | 9.549 | 8.325 | 1728 | 0.100 |
+| dawin+pct | 9.324 | 9.532 | 8.308 | 2688 | 0.109 |
+| dawin_cov | 9.339 | 9.543 | 8.327 | 2592 | 0.106 |
+| dawin_cov+pct | 9.324 | 9.531 | 8.309 | 2592 | 0.115 |
+| adaptive | 9.308 | 9.514 | 8.296 | 2112 | 0.103 |
+| adaptive+pct | 9.294 | 9.503 | 8.282 | 2976 | 0.108 |
+| nonlinear | 9.265 | 9.461 | 8.251 | 2208 | – |
+| nonlinear+pct | 9.254 | 9.451 | 8.237 | 3552 | – |
+
+</details>
+
+Test perplexity by how much of each document is in the datastore (token 13-gram overlap; ensemble/overlap_breakdown.py). Δ is against the fixed kNN-LM in the same group; share = the group's part of the run's total NLL reduction over the fixed kNN-LM.
+
+| Run | <50% in datastore (99% of tokens): PPL | Δ | share | >=50% in datastore (1% of tokens): PPL | Δ | share |
+|---|---:|---:|---:|---:|---:|---:|
+| Pythia-1.4B only | 8.718 | +2.4% |  | 2.227 | +8.7% |  |
+| fixed | 8.516 | +0.0% |  | 2.048 | +0.0% |  |
+| pct | 8.510 | -0.1% | 97% | 2.044 | -0.2% | 3% |
+| dawin | 8.448 | -0.8% | 95% | 1.956 | -4.5% | 5% |
+| dawin+pct | 8.431 | -1.0% | 95% | 1.940 | -5.3% | 5% |
+| dawin_cov | 8.450 | -0.8% | 94% | 1.952 | -4.7% | 6% |
+| dawin_cov+pct | 8.432 | -1.0% | 95% | 1.935 | -5.5% | 5% |
+| adaptive | 8.420 | -1.1% | 94% | 1.910 | -6.7% | 6% |
+| adaptive+pct | 8.406 | -1.3% | 94% | 1.896 | -7.4% | 6% |
+| nonlinear | 8.374 | -1.7% | 96% | 1.909 | -6.8% | 4% |
+| nonlinear+pct | 8.360 | -1.8% | 96% | 1.886 | -7.9% | 4% |
+
+## Github
+
+Not prepared yet.
 
